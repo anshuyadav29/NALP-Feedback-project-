@@ -1,0 +1,69 @@
+# Issue Tracker deployment stack.
+#
+# Only the proxy publishes a port. The application and the database talk over the
+# internal network, which keeps the tracker off the host's port range entirely —
+# the host already runs other services on 8080.
+#
+# Values come from the .env file the deploy script generates next to this file.
+name: issue-tracker
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:?DB_NAME missing from .env}
+      POSTGRES_USER: ${DB_USER:?DB_USER missing from .env}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD missing from .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  app:
+    image: ${APP_IMAGE:?APP_IMAGE missing from .env}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      # Browsers reaching the UI through the proxy send this origin.
+      CORS_ALLOWED_ORIGINS: ${PUBLIC_ORIGINS}
+      # The MCP endpoint rejects unknown Host values with 421, so every name the
+      # proxy may forward has to be listed here — including the bare IP, which is
+      # the fallback whenever mDNS does not resolve. See docs/MCP.md.
+      MCP_ALLOWED_HOSTS: ${PUBLIC_HOSTS}
+      MCP_ALLOWED_ORIGINS: ${PUBLIC_ORIGINS}
+      # Generated once by the deploy script; the endpoint offers cascading
+      # deletes and is reachable from the whole LAN.
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?MCP_AUTH_TOKEN missing from .env}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  db-data:

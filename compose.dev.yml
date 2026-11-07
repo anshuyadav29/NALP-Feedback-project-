@@ -1,0 +1,39 @@
+# Local development database.
+#
+# The backend, the Playwright suite and `./gradlew bootRun` all expect PostgreSQL
+# on localhost:5432 with the credentials from application-dev.yml. This file is
+# what provides it — unlike deploy/compose.yml, which describes the Raspberry Pi
+# stack and generates its secrets at deploy time.
+#
+# Start it before running the end-to-end suite:
+#
+#   docker compose -f compose.dev.yml up -d --wait
+#   cd frontend && npm run test:e2e
+#
+# The stack name differs from the deployment stack so both can coexist.
+name: issue-tracker-dev
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      # Hard-coded on purpose: these match application-dev.yml and are local
+      # development credentials, never reachable from outside the host.
+      POSTGRES_DB: issuetracker
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      # Bound to the loopback interface so the database is not exposed on the LAN.
+      - "127.0.0.1:${DEV_DB_PORT:-5432}:5432"
+    volumes:
+      - dev-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d issuetracker"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  dev-db-data:
